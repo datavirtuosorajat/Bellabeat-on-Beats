@@ -1,0 +1,178 @@
+BellaBeat SQL Queries
+
+
+Cleaning the data
+
+
+-- daily activity table had no duplicate records
+select id, Activitydate, totalsteps, count(*)
+from `fit-base1.fit.daily_activity`
+group by id, ActivityDate, TotalSteps
+having count(*) > 1
+
+
+-- we identified 3 duplicate rows in the sleep_day table so we created a new table and dropped the older one.
+select Id,
+SleepDate,
+TotalSleepRecords,
+count(*)
+from `fit-base1.fit.sleep_day`
+group by Id, SleepDate, TotalSleepRecords
+having count(*) > 1
+create table fit-base1.fit.sleepday_cleaned
+as
+select distinct * from `fit-base1.fit.sleep_day`
+
+
+– To check if table has been created and then drop the older version of the table
+select * from `fit-base1.fit.sleepday_cleaned`
+drop table `fit-base1.fit.sleep_day`
+
+
+Every table in the analysis has been cleaned using a similar approach.
+
+
+-- To find out Basic Statistics for Average Steps, distance, Sleep in the database
+select da.Id,
+round(avg(da.TotalSteps),1) avg_steps,
+round(avg(da.TotalDistance),1) avg_distance,
+round(avg(sd.TotalMinutesasleep),1) avg_minute_asleep
+from `fit-base1.fit.daily_activity` as da
+join `fit-base1.fit.sleepday_cleaned` as sd on
+da.Id = sd.Id
+group by da.Id
+order by avg_distance desc
+
+
+-- To find out Basic Statistics Total Steps, distance, Sleep in the database for each id
+select da.Id,
+round(sum(da.TotalSteps),1) total_steps,
+round(sum(da.TotalDistance),1) total_distance,
+round(sum(sd.TotalMinutesasleep),1) total_minute_asleep
+from `fit-base1.fit.daily_activity` as da
+join `fit-base1.fit.sleepday_cleaned` as sd on
+da.Id = sd.Id
+group by da.Id
+order by total_distance desc
+
+
+-- to get avg  Activity minutes of each id with each day and Classify those minutes by activity level
+select distinct da.Id as Id,
+da.ActivityDay as day,
+round(avg(da.TotalSteps),2) as total_steps,
+round(avg(da.SedentaryMinutes),2) as sedentary_minutes,
+round(avg(da.LightlyActiveMinutes),2) as lightly_actvive_minutes,
+round(avg(da.FairlyActiveMinutes),2) as fairly_active_minutes,
+round(avg(da.VeryActiveMinutes),2) as very_active_minutes
+from `fit-base1.fit.daily_activity` as da
+group by da.Id, da.ActivityDay
+order by da.Id, da.ActivityDay
+
+
+--To check if total steps and calories burned are related and their trends are related and classify them into Activity level
+with Steps_move
+as
+(
+ select ActivityDay,
+ Id,
+ ActivityDate,
+ Calories,
+ TotalSteps,
+   case
+     when TotalSteps < 5000 then "1.sedentary_movement"
+     when TotalSteps between 5001 and 7499 then "2.low_active_movement"
+     when TotalSteps between 7500 and 9999 then "3.active_movement"
+     else "4.very_active_movement"
+     end as daily_movement
+from `fit-base1.fit.daily_activity`
+) select * from steps_move
+order by steps_move.TotalSteps desc
+The steps classification aligns with reputable sources such as the World Health Organization. (2023, June 7). Physical activity. American Heart Association. (2021, November 16).
+U.S. Department of Health and Human Services. (2023, January 10), ensuring accuracy and reliability in promoting physical activity guidelines.
+
+-- To check if there is relation between daily_intensity and calories burned
+with intt
+as
+(select TotalIntensity, Id,
+ActivityHour,
+string_field_2,
+case
+when TotalIntensity between 0 and 30 then 'sedentary_lifestyle'
+when TotalIntensity between 31 and 150 then 'fairly_active_lifestyle'
+when TotalIntensity between 151 and 180 then 'active_lifestyle'
+else 'very_active_lifestyle'
+end as activity_level
+from `fit-base1.fit.hourly_intensities`)
+select
+hi.TotalIntensity,
+hi.Id,
+hi.ActivityHour,
+hi.string_field_2 as day,
+hi.activity_level,
+max(da.Calories) as calories 
+from intt as hi
+join `fit-base1.fit.daily_activity` as da
+on da.Id = hi.Id
+group by hi.TotalIntensity,
+hi.ActivityHour,
+hi.Id,
+hi.string_field_2,
+hi.activity_level
+order by activity_level, day
+
+
+The categorization of Sedentary, Fairly Active, and Active lifestyles is based on established guidelines provided by reputable health organizations. Specifically, the classifications are derived from authoritative sources such as the World Health Organization. (2022, May 31). American Heart Association. (2022, January 27). Centers for Disease Control and Prevention. (2023, January 6).. The Classification methodology ensures alignment with widely accepted standards and enables meaningful interpretations. 
+
+
+-- to find out when is the user most restless, awake or asleep
+with parsed_table
+as
+(select id,
+safe.parse_datetime('%m/%d/%Y %I:%M:%S %p', date) as converted_datetime, 
+safe_cast(Value as int64) as parsed_value,
+safe_cast(logId as int64) as parsed_logId
+from `fit-base1.fit.minute_sleep`)
+select distinct Id,
+parsed_table.converted_datetime,
+extract(time from parsed_table.converted_datetime) as parsed_time,
+parsed_table.parsed_value,
+parsed_table.parsed_logId,
+case
+when parsed_table.parsed_value = 1 then "asleep"
+when parsed_table.parsed_value = 2 then "restless"
+else "awake"
+end as sleep_value
+from parsed_table
+order by sleep_value asc
+
+
+As per Fitbase Data dictionary Value in sleep table is
+If Value = 1 then “Asleep”
+Value = 2 then “Restless”
+Value = 3 then “Awake”
+
+
+--METs classification based on Activity Levels
+select distinct id, METs/10 as METs,
+format_date('%A', EXTRACT(date from ActivityMinute)) as day,
+case
+when m.METs /10 between 0 and 1.5 then "sedentary_mets"
+when m.mets /10 between 1.6 and 2.9 then "light_mets"
+when m.mets /10 between 3.0 and 5.9 then "moderate_mets"
+when m.mets /10 between 6.0 and 8.9 then "vigrous_mets"
+else "high_mets"
+end as mets_classification
+from `fit-base1.fit.mets` as m
+order by mets_classification
+
+
+The categorization of MET (Metabolic Equivalent) is established based on the studies by Tremblay, M. S., Aubert, S., Barnes, J. D., Saunders, T. J., Carson, V., Tremblay, B., ... & Canadian Paediatric Obesity Group. (2015). Sedentary behaviour and cardiovascular disease: a review of prospective studies. International Journal of Behavioral Nutrition and Physical Activity, 12(1), 16
+
+
+-- To get customer free time before getting asleep
+select distinct Id,
+round(avg(TotalMinutesAsleep),1) as Avg_sleep,
+round(avg(Totaltimeinbed),1) as avg_bedtime,
+round(avg(Totaltimeinbed) - avg(TotalMinutesAsleep)) as avg_free_time
+from `fit-base1.fit.sleepday_cleaned`
+group by Id
